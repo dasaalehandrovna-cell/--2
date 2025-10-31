@@ -32,7 +32,7 @@ PORT = int(os.environ.get("PORT", 5000))
 VERSION = "9.8.6"
 
 # Keep-alive настройки
-KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 15 * 60))  # по умолчанию 15 минут
+KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 14 * 60))  # по умолчанию 15 минут
 KEEP_ALIVE_SEND_TO_OWNER = True  # если False — не шлём сообщения владельцу, только self-ping
 
 if not TOKEN:
@@ -43,7 +43,7 @@ app = Flask(__name__)
 
 #--------автоулаление-------
 
-def send_temp_message(chat_id, text, delay=55, **kwargs):
+def send_temp_message(chat_id, text, delay=20, **kwargs):
     """Отправка временного сообщения, которое удаляется через delay секунд."""
     try:
         msg = bot.send_message(chat_id, text, **kwargs)
