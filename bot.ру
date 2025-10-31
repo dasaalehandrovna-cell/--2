@@ -922,7 +922,7 @@ def keep_alive_task():
                 try:
                     tgt = int(OWNER_ID)
                     # отправляем простое информирование (не спамим — только если прошло время)
-                    send_temp_message(tgt, f"🟢 Keep-alive: бот версия {VERSION} работает. Время: {datetime.now(TZ).isoformat(timespec='seconds')}")
+                    send_temp_message(tgt, f"🟢 Keep-alive: бот версия {VERSION} работает. Время: {datetime.now(TZ).isoformat(timespec='seconds')}", delay=1000)
                     log_info(f"Keep-alive: уведомление отправлено владельцу {tgt}")
                 except Exception as e:
                     log_error(f"Keep-alive: не удалось отправить уведомление владельцу: {e}")
