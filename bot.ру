@@ -1,4 +1,4 @@
-# 9.8.6 послед — с keep-alive и уведомлением владельца
+# фо-2 9.8.6 послед — с keep-alive и уведомлением владельца
 # ============================================
 # Финансовый бот — версия 9.8.6
 # Обновлено: подменю "✏️ Редактировать" содержит CSV, Форвард, Получатель, Обнулить, Назад
@@ -32,7 +32,7 @@ PORT = int(os.environ.get("PORT", 5000))
 VERSION = "9.8.6"
 
 # Keep-alive настройки
-KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 11 * 60))  # по умолчанию 15 минут
+KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 20 * 60))  # по умолчанию 15 минут
 KEEP_ALIVE_SEND_TO_OWNER = True  # если False — не шлём сообщения владельцу, только self-ping
 
 if not TOKEN:
@@ -43,7 +43,7 @@ app = Flask(__name__)
 
 #--------автоулаление-------
 
-def send_temp_message(chat_id, text, delay=5, **kwargs):
+def send_temp_message(chat_id, text, delay=55, **kwargs):
     """Отправка временного сообщения, которое удаляется через delay секунд."""
     try:
         msg = bot.send_message(chat_id, text, **kwargs)
