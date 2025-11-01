@@ -1,3 +1,5 @@
+# — с авто удалением по 5 с
+
 # фо-2 9.8.6 послед — с keep-alive и уведомлением владельца
 # ============================================
 # Финансовый бот — версия 9.8.6
@@ -20,14 +22,6 @@ import telebot
 from flask import Flask, request
 from telebot import types
 
-import io
-from dotenv import load_dotenv
-
-load_dotenv()  # загрузка .env в окружение
-
-BACKUP_CHAT_ID = os.getenv("BACKUP_CHAT_ID")
-BACKUP_FILE_NAME = os.getenv("BACKUP_FILE_NAME", "data_backup.json")
-
 # --- Конфигурация (не меняй, если уже настроено в окружении) ---
 TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = os.getenv("OWNER_ID")  # строка с числом или None
@@ -40,7 +34,7 @@ PORT = int(os.environ.get("PORT", 5000))
 VERSION = "9.8.6"
 
 # Keep-alive настройки
-KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 14 * 60))  # по умолчанию 15 минут
+KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 13 * 60))  # по умолчанию 15 минут
 KEEP_ALIVE_SEND_TO_OWNER = True  # если False — не шлём сообщения владельцу, только self-ping
 
 if not TOKEN:
@@ -51,7 +45,7 @@ app = Flask(__name__)
 
 #--------автоулаление-------
 
-def send_temp_message(chat_id, text, delay=20, **kwargs):
+def send_temp_message(chat_id, text, delay=10, **kwargs):
     """Отправка временного сообщения, которое удаляется через delay секунд."""
     try:
         msg = bot.send_message(chat_id, text, **kwargs)
@@ -94,54 +88,6 @@ def log_error(msg):
 log_info(f"Старт приложения. Версия {VERSION}")
 
 # -----------------------------
-# Backup в Telegram Cloud (обновляемый один файл)
-# -----------------------------
-def send_backup_to_telegram():
-    """Отправляет текущий data.json в Telegram, удаляя старый бэкап, чтобы не засорять чат."""
-    chat_id = BACKUP_CHAT_ID or OWNER_ID
-    if not chat_id:
-        log_error("BACKUP_CHAT_ID и OWNER_ID не заданы — невозможно отправить бэкап.")
-        return
-
-    # Проверяем, есть ли предыдущий бэкап и удаляем его
-    #_previous_backup_id = data.get("last_backup_message_id")
-    #_if previous_backup_id:
-        #_try:
-            #_bot.delete_message(int(chat_id), previous_backup_id)
-            #_log_info(f"Удалён предыдущий бэкап (message_id={previous_backup_id})")
-        #_except Exception as e:
-            #_log_error(f"Не удалось удалить предыдущий бэкап: {e}")
-
-    # Отправляем новый бэкап
-    try:
-        with open(DATA_FILE, "rb") as f:
-            msg = bot.send_document(int(chat_id), f, caption=f"💾 Бэкап данных бота ({datetime.now(TZ).isoformat()})")
-        # Сохраняем ID нового бэкапа, чтобы потом удалить при следующем обновлении
-        data["last_backup_message_id"] = msg.message_id
-        save_data(data)
-        log_info(f"Бэкап отправлен в Telegram (чат {chat_id}, message_id={msg.message_id})")
-    except Exception as e:
-        log_error(f"Ошибка отправки бэкапа в Telegram: {e}")
-
-def load_backup_from_telegram(file_path=None):
-    """
-    При необходимости восстановить данные из файла бэкапа.
-    Использует BACKUP_FILE_NAME, если file_path не задан.
-    """
-    path = file_path or BACKUP_FILE_NAME
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            log_info(f"Бэкап {path} загружен успешно")
-            return d
-        except Exception as e:
-            log_error(f"Ошибка загрузки бэкапа {path}: {e}")
-    else:
-        log_info(f"Бэкап {path} не найден, загружаем стандартные данные")
-    return default_data()
-
-# -----------------------------
 # Структура данных и IO
 # -----------------------------
 def default_data():
@@ -180,13 +126,6 @@ def save_data(d):
         log_error(f"Ошибка сохранения data.json: {e}")
 
 data = load_data()
-
-def send_backup_async():
-    """Отправляет бэкап в Telegram как отдельное сообщение, не мешая основному окну"""
-    try:
-        send_backup_to_telegram()  # твоя текущая функция, ничего не меняем
-    except Exception as e:
-        log_error(f"Ошибка фонового отправления бэкапа: {e}")
 
 # если задан OWNER_ID — добавим его в глобальные цели (совместимость со старым кодом)
 if OWNER_ID:
@@ -274,7 +213,7 @@ def add_record_to_chat(chat_id, amount, note, owner):
                     target = None
             if target:
                 try:
-                    bot.send_message(
+                    send_temp_message(
                         int(target),
                         f"💰 {fmt_num(rec['amount'])} ARS\n🆔 {rec['short_id']}\n📝 {rec.get('note','')}\n⏱ {rec.get('timestamp')}"
                     )
@@ -311,9 +250,6 @@ def update_record_in_chat(chat_id, rid, new_amount, new_note, user=None):
         log_info(f"Edit by {user_repr}: R{rid} -> amount={new_amount}, note='{new_note}'")
         return True, found
     return False, None
-
-# Отправка бэкапа параллельно, отдельным сообщением
-threading.Thread(target=send_backup_async, daemon=True).start()
 
 def delete_record_in_chat(chat_id, rid, user=None):
     store = get_chat_store(chat_id)
@@ -433,39 +369,35 @@ def update_or_send_today_window(chat_id, create_if_missing=True):
         text = "\n".join(lines)
 
     kb = build_main_keyboard(chat_id)
-
-    # Добавляем информацию о пересылке
     try:
+        forward_info = ""
         if store.get("forward_enabled"):
             tgt = store.get("forward_target_id") or OWNER_ID
             forward_info = f"\n\n📨 Пересылка: Включена → {tgt}"
         else:
             forward_info = f"\n\n📨 Пересылка: Выключена"
-        text += forward_info
-    except Exception:
+        text = text + forward_info
+    except:
         pass
 
-    # Получаем текущие активные окна
-    today_msgs = data.setdefault("active_messages", {}).setdefault(today_key, {})
+    today_msgs = data.setdefault("active_messages", {}).setdefault(get_today_key(), {})
     active_id = today_msgs.get(str(chat_id))
 
-    # Если окно есть, редактируем его
     if active_id:
         try:
             bot.edit_message_text(text, chat_id, active_id, reply_markup=kb)
         except telebot.apihelper.ApiException as e:
-            # Если окно удалено вручную, удаляем запись и создаём заново
             log_error(f"Не удалось редактировать окно {active_id} для чата {chat_id}: {e}")
-            today_msgs.pop(str(chat_id), None)
-            active_id = None
+        return
 
-    # Создаём окно только если его реально нет
-    if not active_id and create_if_missing:
-        try:
-            sent = bot.send_message(chat_id, text, reply_markup=kb)
-            set_today_active_window(chat_id, sent.message_id)
-        except Exception as e:
-            log_error(f"Ошибка при создании нового окна для {chat_id}: {e}")
+    if not create_if_missing:
+        return
+
+    try:
+        sent = send_temp_message(chat_id, text, reply_markup=kb)
+        set_today_active_window(chat_id, sent.message_id)
+    except Exception as e:
+        log_error(f"Ошибка при создании нового окна для {chat_id}: {e}")
 
 # -----------------------------
 # Callback обработчик
@@ -497,7 +429,7 @@ def handle_callback(call):
                 log_error(f"Ошибка открытия подменю редактирования: {e}")
         else:
             try:
-                sent = bot.send_message(chat_id, text, reply_markup=build_edit_menu_keyboard(chat_id))
+                sent = send_temp_message(chat_id, text, reply_markup=build_edit_menu_keyboard(chat_id))
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки подменю редактирования: {e}")
@@ -628,7 +560,7 @@ def handle_callback(call):
                 log_error(f"Ошибка редактирования окна (Инфо): {e}")
         else:
             try:
-                sent = bot.send_message(chat_id, info_text, reply_markup=build_main_keyboard(chat_id))
+                sent = send_temp_message(chat_id, info_text, reply_markup=build_main_keyboard(chat_id))
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки инфо: {e}")
@@ -663,7 +595,7 @@ def handle_callback(call):
                 log_error(f"Ошибка показа списка редактирования: {e}")
         else:
             try:
-                sent = bot.send_message(chat_id, text, reply_markup=kb)
+                sent = send_temp_message(chat_id, text, reply_markup=kb)
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки списка редактирования: {e}")
@@ -694,7 +626,7 @@ def handle_callback(call):
                 log_error(f"Ошибка показа детали записи: {e}")
         else:
             try:
-                sent = bot.send_message(chat_id, text, reply_markup=kb)
+                sent = send_temp_message(chat_id, text, reply_markup=kb)
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки детали записи: {e}")
@@ -870,7 +802,7 @@ def cmd_balance(msg):
         f"💵 Приход за сегодня: {fmt_num(daily_income)} ARS\n"
         f"💸 Расход за сегодня: {fmt_num(abs(daily_expense))} ARS"
     )
-    bot.send_message(chat_id, text)
+    send_temp_message(chat_id, text)
 
 @bot.message_handler(commands=["report"])
 def cmd_report(msg):
@@ -880,13 +812,13 @@ def cmd_report(msg):
     day_records = store.get("daily_records", {}).get(today_key, [])
     expenses = [r for r in day_records if r["amount"] < 0]
     if not expenses:
-        bot.send_message(chat_id, f"📅 {today_key}\nПока нет расходов за сегодня.\n💸 Расход за день: 0 ARS")
+        send_temp_message(chat_id, f"📅 {today_key}\nПока нет расходов за сегодня.\n💸 Расход за день: 0 ARS")
         return
     lines = [f"📅 {today_key}", "📋 Расходы за день:"]
     for r in expenses[-30:]:
         lines.append(f"{r['short_id']}: -{fmt_num(abs(r['amount']))} — {r.get('note','')}")
     lines.append(f"\n💸 Расход за день: {fmt_num(sum(abs(r['amount']) for r in expenses))} ARS")
-    bot.send_message(chat_id, "\n".join(lines))
+    send_temp_message(chat_id, "\n".join(lines))
 
 @bot.message_handler(commands=["csv"])
 def cmd_csv(msg):
@@ -904,12 +836,6 @@ def cmd_reset(msg):
     kb.row(types.InlineKeyboardButton("✅ Да, обнулить", callback_data="confirm_reset"),
            types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_reset"))
     send_temp_message(chat_id, "⚠️ Вы уверены, что хотите обнулить все данные этого чата? Это действие нельзя будет отменить.", reply_markup=kb)
-
-@bot.message_handler(commands=["backup"])
-def cmd_backup(msg):
-    chat_id = msg.chat.id
-    send_backup_to_telegram()
-    bot.send_message(chat_id, "💾 Бэкап данных отправлен в Telegram Cloud ✅")
 
 # Основной обработчик текстовых сообщений
 @bot.message_handler(func=lambda m: True)
@@ -998,7 +924,7 @@ def keep_alive_task():
                 try:
                     tgt = int(OWNER_ID)
                     # отправляем простое информирование (не спамим — только если прошло время)
-                    send_temp_message(tgt, f"🟢 Keep-alive: бот версия {VERSION} работает. Время: {datetime.now(TZ).isoformat(timespec='seconds')}", delay=1000)
+                    send_temp_message(tgt, f"🟢 Keep-alive: бот версия {VERSION} работает. Время: {datetime.now(TZ).isoformat(timespec='seconds')}")
                     log_info(f"Keep-alive: уведомление отправлено владельцу {tgt}")
                 except Exception as e:
                     log_error(f"Keep-alive: не удалось отправить уведомление владельцу: {e}")
