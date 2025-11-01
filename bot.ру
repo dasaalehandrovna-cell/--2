@@ -1014,23 +1014,38 @@ def backup_to_telegram():
 # -----------------------------
 # Восстановление данных из последнего бэкапа
 # -----------------------------
+
 def restore_from_telegram():
-    """Ищет последнее сообщение с бэкапом в чате OWNER_ID"""
+    """
+    Восстанавливает данные бота из последнего бэкапа в Telegram.
+    Использует пересланный документ из BACKUP_CHAT_ID.
+    """
     try:
-        messages = bot.get_chat_history(BACKUP_CHAT_ID, limit=20)
-        for msg in reversed(messages):
-            if msg.document and msg.document.file_name == BACKUP_FILE_NAME:
-                file_info = bot.get_file(msg.document.file_id)
-                downloaded_file = bot.download_file(file_info.file_path)
-                d = json.loads(downloaded_file.decode("utf-8"))
-                global data
-                data = d
-                save_data(data)
-                print("✅ Данные восстановлены из Telegram")
-                return True
+        updates = bot.get_updates(limit=50)  # Получаем последние обновления
+        backup_file = None
+
+        # Ищем последний документ с бэкапом
+        for update in reversed(updates):
+            if update.message and update.message.document:
+                backup_file = update.message.document
+                break
+
+        if not backup_file:
+            print("⚠️ Бэкап в Telegram не найден.")
+            return False
+
+        file_info = bot.get_file(backup_file.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        data = json.loads(downloaded_file.decode("utf-8"))
+
+        # Загружаем данные в память
+        store.update(data)
+        print("✅ Данные успешно восстановлены из Telegram.")
+        return True
+
     except Exception as e:
-        print(f"❌ Ошибка восстановления из Telegram: {e}")
-    return False
+        print(f"❌ Ошибка восстановления: {e}")
+        return False
 
 # -----------------------------
 # Авто-бэкап при изменении данных
@@ -1058,17 +1073,28 @@ def auto_backup_on_change():
 # Запуск
 # -----------------------------
 if __name__ == "__main__":
-    print("⏳ Старт бота, попытка восстановления данных...")
-    restored = restore_from_telegram()
-    if not restored:
-        print("⚠️ Данных из Telegram не найдено, используем локальные данные.")
-    set_webhook()
-    schedule_daily_window_creation()
-    start_keep_alive_thread()
-    log_info(f"Бот ФО версии {VERSION} запущен")
+    # Восстанавливаем данные в отдельном потоке, чтобы не блокировать Flask
+    def restore_thread():
+        restored = restore_from_telegram()
+        if restored and OWNER_ID:
+            try:
+                bot.send_message(int(OWNER_ID), "✅ Бэкап успешно восстановлен.")
+            except Exception as e:
+                print(f"⚠️ Не удалось уведомить владельца: {e}")
+
+    threading.Thread(target=restore_thread, daemon=True).start()
+
+    # Настройка webhook
     try:
-        if OWNER_ID:
-            bot.send_message(int(OWNER_ID), f"✅ Бот запущен и работает! (версия {VERSION})")
+        set_webhook()  # Если используете webhook, иначе skip
     except Exception as e:
-        log_error(f"Не удалось отправить сообщение о запуске: {e}")
-    app.run(host="0.0.0.0", port=PORT)
+        print(f"⚠️ Ошибка установки webhook: {e}")
+
+    # Запуск keep-alive и авто-бэкапа
+    threading.Thread(target=keep_alive_task, daemon=True).start()
+    threading.Thread(target=auto_backup_on_change, daemon=True).start()
+    threading.Thread(target=schedule_daily_window_creation, daemon=True).start()
+
+    # Запуск Flask
+    print("⏳ Старт бота...")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
