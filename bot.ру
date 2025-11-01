@@ -388,7 +388,7 @@ def update_or_send_today_window(chat_id, create_if_missing=True):
     except:
         pass
 
-    today_msgs = data.setdefault("active_messages", {}).setdefault(get_today_key(), {})
+today_msgs = data.setdefault("active_messages", {}).setdefault(get_today_key(), {})
 active_id = today_msgs.get(str(chat_id))
 
 # Если окно есть, редактируем его
@@ -989,6 +989,54 @@ def schedule_daily_window_creation():
                 time.sleep(5)
     thread = threading.Thread(target=task, daemon=True)
     thread.start()
+
+# -----------------------------
+# Backup в Telegram Cloud (обновляемый один файл)
+# -----------------------------
+def send_backup_to_telegram():
+    """Отправляет текущий data.json в Telegram, удаляя старый бэкап, чтобы не засорять чат."""
+    chat_id = BACKUP_CHAT_ID or OWNER_ID
+    if not chat_id:
+        log_error("BACKUP_CHAT_ID и OWNER_ID не заданы — невозможно отправить бэкап.")
+        return
+
+    # Проверяем, есть ли предыдущий бэкап и удаляем его
+    previous_backup_id = data.get("last_backup_message_id")
+    if previous_backup_id:
+        try:
+            bot.delete_message(int(chat_id), previous_backup_id)
+            log_info(f"Удалён предыдущий бэкап (message_id={previous_backup_id})")
+        except Exception as e:
+            log_error(f"Не удалось удалить предыдущий бэкап: {e}")
+
+    # Отправляем новый бэкап
+    try:
+        with open(DATA_FILE, "rb") as f:
+            msg = bot.send_document(int(chat_id), f, caption=f"💾 Бэкап данных бота ({datetime.now(TZ).isoformat()})")
+        # Сохраняем ID нового бэкапа, чтобы потом удалить при следующем обновлении
+        data["last_backup_message_id"] = msg.message_id
+        save_data(data)
+        log_info(f"Бэкап отправлен в Telegram (чат {chat_id}, message_id={msg.message_id})")
+    except Exception as e:
+        log_error(f"Ошибка отправки бэкапа в Telegram: {e}")
+
+def load_backup_from_telegram(file_path=None):
+    """
+    При необходимости восстановить данные из файла бэкапа.
+    Использует BACKUP_FILE_NAME, если file_path не задан.
+    """
+    path = file_path or BACKUP_FILE_NAME
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            log_info(f"Бэкап {path} загружен успешно")
+            return d
+        except Exception as e:
+            log_error(f"Ошибка загрузки бэкапа {path}: {e}")
+    else:
+        log_info(f"Бэкап {path} не найден, загружаем стандартные данные")
+    return default_data()
 
 # -----------------------------
 # Запуск
