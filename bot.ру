@@ -104,13 +104,13 @@ def send_backup_to_telegram():
         return
 
     # Проверяем, есть ли предыдущий бэкап и удаляем его
-    previous_backup_id = data.get("last_backup_message_id")
-    if previous_backup_id:
-        try:
-            bot.delete_message(int(chat_id), previous_backup_id)
-            log_info(f"Удалён предыдущий бэкап (message_id={previous_backup_id})")
-        except Exception as e:
-            log_error(f"Не удалось удалить предыдущий бэкап: {e}")
+    #_previous_backup_id = data.get("last_backup_message_id")
+    #_if previous_backup_id:
+        #_try:
+            #_bot.delete_message(int(chat_id), previous_backup_id)
+            #_log_info(f"Удалён предыдущий бэкап (message_id={previous_backup_id})")
+        #_except Exception as e:
+            #_log_error(f"Не удалось удалить предыдущий бэкап: {e}")
 
     # Отправляем новый бэкап
     try:
