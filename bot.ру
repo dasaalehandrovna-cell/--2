@@ -434,6 +434,26 @@ def auto_backup_on_change():
     t.start()
 
 # -----------------------------
+# Установка webhook (для Render, Railway, и т.д.)
+# -----------------------------
+def set_webhook():
+    """Устанавливает webhook, если бот работает на сервере с HTTPS"""
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    if webhook_url:
+        full_url = f"{webhook_url}/{TOKEN}"
+        try:
+            bot.remove_webhook()
+            bot.set_webhook(url=full_url)
+            log_info(f"Webhook установлен: {full_url}")
+        except Exception as e:
+            log_error(f"Ошибка установки webhook: {e}")
+    else:
+        log_info("Webhook не используется — работает polling")
+
+# Вызываем установку
+set_webhook()
+
+# -----------------------------
 # Старт бота с восстановлением
 # -----------------------------
 if __name__ == "__main__":
