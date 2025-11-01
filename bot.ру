@@ -394,7 +394,7 @@ def update_or_send_today_window(chat_id, create_if_missing=True):
         return
 
     try:
-        sent = send_temp_message(chat_id, text, reply_markup=kb)
+        sent = bot.send_message(chat_id, text, reply_markup=kb)
         set_today_active_window(chat_id, sent.message_id)
     except Exception as e:
         log_error(f"Ошибка при создании нового окна для {chat_id}: {e}")
@@ -429,7 +429,7 @@ def handle_callback(call):
                 log_error(f"Ошибка открытия подменю редактирования: {e}")
         else:
             try:
-                sent = send_temp_message(chat_id, text, reply_markup=build_edit_menu_keyboard(chat_id))
+                sent = bot.send_message(chat_id, text, reply_markup=build_edit_menu_keyboard(chat_id))
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки подменю редактирования: {e}")
@@ -498,7 +498,7 @@ def handle_callback(call):
     if call.data == "btn_set_forward_target":
         try:
             bot.answer_callback_query(call.id)
-            sent = send_temp_message(chat_id, "Введите ID пользователя, которому нужно пересылать записи (или введите 0, чтобы сбросить):")
+            sent = bot.send_message(chat_id, "Введите ID пользователя, которому нужно пересылать записи (или введите 0, чтобы сбросить):")
             bot.register_next_step_handler(sent, process_forward_target)
         except Exception as e:
             log_error(f"Ошибка при запросе ID получателя: {e}")
@@ -560,7 +560,7 @@ def handle_callback(call):
                 log_error(f"Ошибка редактирования окна (Инфо): {e}")
         else:
             try:
-                sent = send_temp_message(chat_id, info_text, reply_markup=build_main_keyboard(chat_id))
+                sent = bot.send_message(chat_id, info_text, reply_markup=build_main_keyboard(chat_id))
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки инфо: {e}")
@@ -595,7 +595,7 @@ def handle_callback(call):
                 log_error(f"Ошибка показа списка редактирования: {e}")
         else:
             try:
-                sent = send_temp_message(chat_id, text, reply_markup=kb)
+                sent = bot.send_message(chat_id, text, reply_markup=kb)
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки списка редактирования: {e}")
@@ -626,7 +626,7 @@ def handle_callback(call):
                 log_error(f"Ошибка показа детали записи: {e}")
         else:
             try:
-                sent = send_temp_message(chat_id, text, reply_markup=kb)
+                sent = bot.send_message(chat_id, text, reply_markup=kb)
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки детали записи: {e}")
@@ -679,7 +679,7 @@ def handle_callback(call):
                 log_error(f"Ошибка показа подтверждения удаления: {e}")
         else:
             try:
-                sent = send_temp_message(chat_id, f"Подтвердите удаление записи R{rid}:", reply_markup=build_confirm_delete_keyboard(rid))
+                sent = bot.send_message(chat_id, f"Подтвердите удаление записи R{rid}:", reply_markup=build_confirm_delete_keyboard(rid))
                 set_today_active_window(chat_id, sent.message_id)
             except Exception as e:
                 log_error(f"Ошибка отправки подтверждения удаления: {e}")
