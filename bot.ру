@@ -312,10 +312,6 @@ def update_record_in_chat(chat_id, rid, new_amount, new_note, user=None):
         return True, found
     return False, None
 
-# Добавляем запись
-rec = add_record_to_chat(chat_id, amount, note, owner)
-update_or_send_today_window(chat_id)  # обновляем основное окно с кнопками
-
 # Отправка бэкапа параллельно, отдельным сообщением
 threading.Thread(target=send_backup_async, daemon=True).start()
 
