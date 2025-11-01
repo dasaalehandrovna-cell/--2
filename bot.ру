@@ -1,11 +1,11 @@
 # — с авто удалением по 5 с
-
 # фо-2 9.8.6 послед — с keep-alive и уведомлением владельца
 # ============================================
 # Финансовый бот — версия 9.8.6
 # Обновлено: подменю "✏️ Редактировать" содержит CSV, Форвард, Получатель, Обнулить, Назад
-# Добавлено: keep-alive (пинг OWNER_ID и self-
-#
+# Добавлено: keep-alive (пинг OWNER_ID и self-ping)
+# Добавлено: Telegram Backup (отдельное сообщение владельцу + перезапись файла)
+# ============================================
 
 import os
 import json
@@ -38,42 +38,19 @@ VERSION = "9.8.6"
 KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 13 * 60))  # по умолчанию 15 минут
 KEEP_ALIVE_SEND_TO_OWNER = True  # если False — не шлём сообщения владельцу, только self-ping
 
-# бэкап
-BACKUP_CHAT_ID = 8107562890  # Используем OWNER_ID для хранения бэкапа
-BACKUP_FILE_NAME = "backup_data.json"
+# --- Параметры бэкапа в Telegram ---
+BACKUP_META_FILE = "backup_meta.json"   # локально: хранит message_id + file_id
+BACKUP_DOC_FILENAME = "backup_data.json"
+BACKUP_CAPTION = f"🗄️ Backup (FO {VERSION}) — автообновление"
+
+# Если выставить '1', при старте попытаться восстановиться из Telegram, даже если есть локальный data.json
+FORCE_RESTORE = os.getenv("FORCE_RESTORE", "0") == "1"
 
 if not TOKEN:
     raise ValueError("BOT_TOKEN не установлен!")
 
 bot = telebot.TeleBot(TOKEN, threaded=True)
 app = Flask(__name__)
-
-#--------автоулаление-------
-
-def send_temp_message(chat_id, text, delay=10, **kwargs):
-    """Отправка временного сообщения, которое удаляется через delay секунд."""
-    try:
-        msg = bot.send_message(chat_id, text, **kwargs)
-        threading.Timer(delay, lambda: delete_message_safe(chat_id, msg.message_id)).start()
-    except Exception as e:
-        log_error(f"send_temp_message: не удалось отправить/удалить сообщение: {e}")
-
-def delete_message_safe(chat_id, message_id):
-    """Удаляет сообщение, игнорируя ошибки."""
-    try:
-        bot.delete_message(chat_id, message_id)
-    except:
-        pass
-#--------автоулаление-------
-
-# ----------------------------------------
-# ФУНКЦИЯ ФОРМАТИРОВАНИЯ ЧИСЕЛ
-# ----------------------------------------
-def fmt_num(value):
-    try:
-        return f"{value:,.0f}".replace(",", ".")
-    except Exception:
-        return str(value)
 
 # -----------------------------
 # Логирование
@@ -85,12 +62,38 @@ logging.basicConfig(
     handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()]
 )
 
-def log_info(msg):
-    logging.info(msg)
-def log_error(msg):
-    logging.error(msg)
+def log_info(msg): logging.info(msg)
+def log_error(msg): logging.error(msg)
 
 log_info(f"Старт приложения. Версия {VERSION}")
+
+# -----------------------------
+# Автоудаление (НЕ используется для бэкапа)
+# -----------------------------
+def send_temp_message(chat_id, text, delay=10, **kwargs):
+    """Отправка временного сообщения, которое удаляется через delay секунд."""
+    try:
+        msg = bot.send_message(chat_id, text, **kwargs)
+        threading.Timer(delay, lambda: delete_message_safe(chat_id, msg.message_id)).start()
+        return msg
+    except Exception as e:
+        log_error(f"send_temp_message: не удалось отправить/удалить сообщение: {e}")
+
+def delete_message_safe(chat_id, message_id):
+    """Удаляет сообщение, игнорируя ошибки."""
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
+# ----------------------------------------
+# ФУНКЦИЯ ФОРМАТИРОВАНИЯ ЧИСЕЛ
+# ----------------------------------------
+def fmt_num(value):
+    try:
+        return f"{value:,.0f}".replace(",", ".")
+    except Exception:
+        return str(value)
 
 # -----------------------------
 # Структура данных и IO
@@ -107,50 +110,69 @@ def default_data():
         "next_id": 1
     }
 
+def _read_json_file(path, fallback):
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        log_error(f"_read_json_file: {path}: {e}")
+    return fallback
+
+def _write_json_file(path, payload):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log_error(f"_write_json_file: {path}: {e}")
+
+def _owner_id_int():
+    try:
+        return int(OWNER_ID) if OWNER_ID else None
+    except:
+        return None
+
+def _merge_defaults(d):
+    base = default_data()
+    for k, v in base.items():
+        if k not in d:
+            d[k] = v
+    return d
+
+def _load_backup_meta():
+    meta = _read_json_file(BACKUP_META_FILE, {})
+    # ожидаем: {"message_id": int, "file_id": "AA..."}
+    if not isinstance(meta, dict):
+        return {}
+    return meta
+
+def _save_backup_meta(meta):
+    if not isinstance(meta, dict):
+        return
+    _write_json_file(BACKUP_META_FILE, meta)
+
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                d = json.load(f)
-        except Exception as e:
-            log_error(f"Ошибка чтения data.json: {e}")
-            d = default_data()
-    else:
+    d = _read_json_file(DATA_FILE, None)
+    if d is None:
         d = default_data()
-    base = default_data()
-    for k, v in base.items():
-        if k not in d:
-            d[k] = v
-    return d
-
-# Попытка загрузки из Telegram Cloud, если данных нет
-    if not d.get("records"):
+    # при старте — опционально попытка восстановления из Telegram
+    if (FORCE_RESTORE or not d.get("records")) and _owner_id_int():
         try:
-            cloud_msg_id_file = "cloud_backup_msg_id.txt"
-            if os.path.exists(cloud_msg_id_file) and OWNER_ID:
-                with open(cloud_msg_id_file, "r") as f:
-                    msg_id = int(f.read().strip())
-                f_msg = bot.forward_message(chat_id=int(OWNER_ID), from_chat_id=int(OWNER_ID), message_id=msg_id)
-                cloud_data = f_msg.json if hasattr(f_msg, "json") else None
-                if cloud_data:
-                    d = json.loads(cloud_data)
-                    log_info("Данные восстановлены из Telegram Cloud")
+            if try_restore_from_telegram():
+                d = _read_json_file(DATA_FILE, d)  # после успешного restore локальный файл уже перезаписан
+                log_info("Восстановление: данные загружены из Telegram backup.")
         except Exception as e:
-            log_error(f"Ошибка восстановления из Cloud: {e}")
-
-    # Дополняем недостающие ключи
-    base = default_data()
-    for k, v in base.items():
-        if k not in d:
-            d[k] = v
-    return d
+            log_error(f"Восстановление при старте не удалось: {e}")
+    return _merge_defaults(d)
 
 def save_data(d):
+    """Сохраняем локально и планируем фоновый бэкап в Telegram (дебаунс)."""
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
     except Exception as e:
         log_error(f"Ошибка сохранения data.json: {e}")
+    _schedule_backup_debounced()
 
 data = load_data()
 
@@ -240,7 +262,7 @@ def add_record_to_chat(chat_id, amount, note, owner):
                     target = None
             if target:
                 try:
-                    send_temp_message(
+                    bot.send_message(
                         int(target),
                         f"💰 {fmt_num(rec['amount'])} ARS\n🆔 {rec['short_id']}\n📝 {rec.get('note','')}\n⏱ {rec.get('timestamp')}"
                     )
@@ -256,7 +278,6 @@ def update_record_in_chat(chat_id, rid, new_amount, new_note, user=None):
     found = None
     for r in store.get("records", []):
         if r["id"] == rid:
-            old = r.copy()
             r["amount"] = new_amount
             r["note"] = new_note
             found = r
@@ -576,10 +597,11 @@ def handle_callback(call):
             "/reset - Полностью очистить все записи (покажет подтверждение)\n"
             "/ping - Проверить жив ли бот\n"
             "/help - Помощь\n\n"
-            "/restore"
             "📝 Добавление операций (форматы):\n"
             "+500 Зарплата    (или ^+^500^)\n"
             "-150 Обед       (или ^-^150^)\n"
+            "\n"
+            "🔐 Резервное копирование: /backup_now (владельцу), восстановление: /restore"
         )
         if active_id:
             try:
@@ -773,8 +795,6 @@ def process_forward_target(message):
             update_or_send_today_window(chat_id)
             return
 
-        text = text.strip()
-
         if not (text.startswith("-") or text.isdigit()):
             send_temp_message(chat_id, "❌ Некорректный ID. Пример: -1001234567890\nПопробуйте снова или введите 0 для сброса.")
             return
@@ -798,7 +818,7 @@ def process_forward_target(message):
             pass
 
 # -----------------------------
-# Входящие сообщения и команды
+# Команды (help/ping/balance/report/csv/reset)
 # -----------------------------
 @bot.message_handler(commands=["start", "info"])
 def cmd_start(msg):
@@ -808,7 +828,7 @@ def cmd_start(msg):
 @bot.message_handler(commands=["help"])
 def cmd_help(msg):
     chat_id = msg.chat.id
-    send_temp_message(chat_id, "Отправьте сумму в формате +500 Примечание или -150 Обед. Команды: /start /balance /report /csv /reset /ping")
+    send_temp_message(chat_id, "Отправьте сумму в формате +500 Примечание или -150 Обед. Команды: /start /balance /report /csv /reset /ping /backup_now /restore")
 
 @bot.message_handler(commands=["ping"])
 def cmd_ping(msg):
@@ -865,7 +885,123 @@ def cmd_reset(msg):
            types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_reset"))
     send_temp_message(chat_id, "⚠️ Вы уверены, что хотите обнулить все данные этого чата? Это действие нельзя будет отменить.", reply_markup=kb)
 
+# -----------------------------
+# РЕЗЕРВНОЕ КОПИРОВАНИЕ (владельцу)
+# -----------------------------
+_backup_lock = threading.Lock()
+_backup_timer = None
+_BACKUP_DEBOUNCE_SECONDS = 3  # коалесцируем частые изменения
+
+def _schedule_backup_debounced():
+    """Планируем авто-бэкап через короткую задержку, чтобы не спамить API."""
+    global _backup_timer
+    with _backup_lock:
+        if _backup_timer and _backup_timer.is_alive():
+            _backup_timer.cancel()
+        _backup_timer = threading.Timer(_BACKUP_DEBOUNCE_SECONDS, safe_backup_to_telegram)
+        _backup_timer.daemon = True
+        _backup_timer.start()
+
+def _build_backup_bytes():
+    payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    return io.BytesIO(payload)  # важно: новый поток при каждом апдейте
+
+def safe_backup_to_telegram():
+    """Отправляем/обновляем документ-бэкап владельцу в отдельном сообщении."""
+    owner = _owner_id_int()
+    if not owner:
+        return
+    try:
+        meta = _load_backup_meta()
+        message_id = meta.get("message_id")
+        if message_id:
+            # Обновляем медиа того же сообщения (не трогаем основное окно!)
+            try:
+                media = types.InputMediaDocument(
+                    media=_build_backup_bytes(),
+                    caption=BACKUP_CAPTION,
+                    filename=BACKUP_DOC_FILENAME
+                )
+                edited = bot.edit_message_media(chat_id=owner, message_id=message_id, media=media)
+                # получаем новый file_id (может измениться)
+                if edited and edited.document:
+                    meta["file_id"] = edited.document.file_id
+                    _save_backup_meta(meta)
+                log_info("Backup: обновлён файл в существующем сообщении.")
+                return
+            except telebot.apihelper.ApiException as e:
+                log_error(f"Backup edit_message_media ошибка: {e}. Попытка отправить заново.")
+                # если не получилось отредактировать (например, сообщение удалено) — отправляем новое
+                message_id = None
+
+        # Сообщение ещё не создано или не получилось отредактировать — шлём новое
+        sent = bot.send_document(
+            owner,
+            document=_build_backup_bytes(),
+            visible_file_name=BACKUP_DOC_FILENAME,
+            caption=BACKUP_CAPTION
+        )
+        meta = {
+            "message_id": sent.message_id,
+            "file_id": sent.document.file_id,
+            "updated_at": datetime.now(TZ).isoformat(timespec="seconds")
+        }
+        _save_backup_meta(meta)
+        log_info("Backup: создано новое сообщение с документом.")
+    except Exception as e:
+        log_error(f"safe_backup_to_telegram: {e}")
+
+def try_restore_from_telegram():
+    """Пытаемся скачать текущий backup_data.json из лички владельца по сохранённому file_id."""
+    owner = _owner_id_int()
+    if not owner:
+        return False
+    try:
+        meta = _load_backup_meta()
+        file_id = meta.get("file_id")
+        if not file_id:
+            log_info("Восстановление: file_id отсутствует (meta пустая).")
+            return False
+
+        file_info = bot.get_file(file_id)
+        raw = bot.download_file(file_info.file_path)
+        restored = json.loads(raw.decode("utf-8"))
+        # cлияние дефолтов + запись на диск
+        restored = _merge_defaults(restored)
+        _write_json_file(DATA_FILE, restored)
+        log_info("Восстановление: локальный data.json перезаписан данными из Telegram.")
+        return True
+    except Exception as e:
+        log_error(f"try_restore_from_telegram: {e}")
+        return False
+
+@bot.message_handler(commands=["backup_now"])
+def cmd_backup_now(msg):
+    owner = _owner_id_int()
+    if not owner or msg.from_user.id != owner:
+        send_temp_message(msg.chat.id, "❌ Только владелец может запускать резервное копирование.")
+        return
+    safe_backup_to_telegram()
+    send_temp_message(msg.chat.id, "✅ Бэкап отправлен / обновлён.", delay=5)
+
+@bot.message_handler(commands=["restore"])
+def cmd_restore_now(msg):
+    owner = _owner_id_int()
+    if not owner or msg.from_user.id != owner:
+        send_temp_message(msg.chat.id, "❌ Только владелец может восстанавливать данные.")
+        return
+    ok = try_restore_from_telegram()
+    if ok:
+        # перечитать в память
+        global data
+        data = load_data()
+        send_temp_message(msg.chat.id, "✅ Данные восстановлены из Telegram backup.", delay=8)
+    else:
+        send_temp_message(msg.chat.id, "⚠️ Не удалось найти актуальный бэкап (или нет file_id).", delay=8)
+
+# -----------------------------
 # Основной обработчик текстовых сообщений
+# -----------------------------
 @bot.message_handler(func=lambda m: True)
 def handle_message(msg):
     chat_id = msg.chat.id
@@ -880,7 +1016,7 @@ def handle_message(msg):
             store["edit_target"] = None
             save_data(data)
             return
-        parts = msg.text.strip().split(" ", 1)
+        parts = (msg.text or "").strip().split(" ", 1)
         try:
             amount_token = parts[0]
             amount = parse_amount_token(amount_token)
@@ -918,44 +1054,6 @@ def handle_message(msg):
     send_temp_message(chat_id, "Я получил сообщение. Чтобы добавить запись, отправьте сумму в формате +500 Заметка. Для помощи — /help")
     return
 
-# ------------------------------
-# Восстановление данных через webhook
-# ------------------------------
-
-# Команда для запуска восстановления
-@bot.message_handler(commands=["restore"])
-def handle_restore_command(message):
-    # Проверяем, что это владелец
-    if message.from_user.id != OWNER_ID:
-        bot.send_message(message.chat.id, "❌ У вас нет прав на восстановление данных.")
-        return
-
-    bot.send_message(message.chat.id, "📂 Пожалуйста, отправьте файл бэкапа (.json).")
-    # Ждём следующий шаг — документ
-    bot.register_next_step_handler(message, process_backup_file)
-
-
-# Обработка присланного файла
-def process_backup_file(message):
-    try:
-        if not message.document:
-            bot.send_message(message.chat.id, "❌ Это не документ. Попробуйте ещё раз с файлом .json.")
-            return
-
-        # Получаем информацию о файле
-        file_info = bot.get_file(message.document.file_id)
-        # Скачиваем файл
-        downloaded_file = bot.download_file(file_info.file_path)
-        # Парсим JSON
-        data = json.loads(downloaded_file.decode("utf-8"))
-
-        # Обновляем store бота
-        store.update(data)
-
-        bot.send_message(message.chat.id, "✅ Бэкап успешно восстановлен!")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка восстановления: {e}")
-
 # -----------------------------
 # Flask webhook
 # -----------------------------
@@ -973,7 +1071,6 @@ def index():
 # Keep-alive / self-ping / notify owner
 # -----------------------------
 def keep_alive_task():
-    last_notice = 0
     while True:
         try:
             log_info("Keep-alive: выполняем пинг self и уведомление владельца (если задан).")
@@ -985,37 +1082,20 @@ def keep_alive_task():
             except Exception as e:
                 log_error(f"Keep-alive: ошибка self-ping: {e}")
 
-            # уведомление владельцу (один раз за интервал)
+            # уведомление владельцу
             if KEEP_ALIVE_SEND_TO_OWNER and OWNER_ID:
                 try:
                     tgt = int(OWNER_ID)
-                    # отправляем простое информирование (не спамим — только если прошло время)
-                    send_temp_message(tgt, f"🟢 Keep-alive: бот версия {VERSION} работает. Время: {datetime.now(TZ).isoformat(timespec='seconds')}")
-                    log_info(f"Keep-alive: уведомление отправлено владельцу {tgt}")
+                    bot.send_message(tgt, f"🟢 Keep-alive: бот версия {VERSION} работает. Время: {datetime.now(TZ).isoformat(timespec='seconds')}")
                 except Exception as e:
                     log_error(f"Keep-alive: не удалось отправить уведомление владельцу: {e}")
         except Exception as e:
             log_error(f"Keep-alive: ошибка основного цикла: {e}")
-        # ждем следующий интервал
         time.sleep(max(10, KEEP_ALIVE_INTERVAL_SECONDS))
 
-def start_keep_alive_thread():
-    thread = threading.Thread(target=keep_alive_task, daemon=True)
-    thread.start()
-
 # -----------------------------
-# Установка webhook и планировщик
+# Планировщик: создание окна нового дня
 # -----------------------------
-def set_webhook():
-    url = f"{APP_URL}/{TOKEN}"
-    try:
-        bot.remove_webhook()
-        time.sleep(0.5)
-        bot.set_webhook(url=url)
-        log_info(f"Webhook установлен: {url}")
-    except Exception as e:
-        log_error(f"Не удалось установить webhook: {e}")
-
 def schedule_daily_window_creation():
     def task():
         last_day = get_today_key()
@@ -1041,100 +1121,30 @@ def schedule_daily_window_creation():
     thread.start()
 
 # -----------------------------
-# Сохранение бэкапа в телеграм
-# -----------------------------
-def backup_to_telegram():
-    try:
-        json_data = json.dumps(data, ensure_ascii=False, indent=2)
-        bot.send_document(BACKUP_CHAT_ID, (BACKUP_FILE_NAME, json_data.encode("utf-8")))
-        print("✅ Бэкап отправлен в Telegram")
-    except Exception as e:
-        print(f"❌ Ошибка бэкапа в Telegram: {e}")
-
-# -----------------------------
-# Восстановление данных из последнего бэкапа
-# -----------------------------
-
-def restore_from_telegram():
-    """
-    Восстанавливает данные бота из последнего бэкапа в Telegram.
-    Использует пересланный документ из BACKUP_CHAT_ID.
-    """
-    try:
-        updates = bot.get_updates(limit=50)  # Получаем последние обновления
-        backup_file = None
-
-        # Ищем последний документ с бэкапом
-        for update in reversed(updates):
-            if update.message and update.message.document:
-                backup_file = update.message.document
-                break
-
-        if not backup_file:
-            print("⚠️ Бэкап в Telegram не найден.")
-            return False
-
-        file_info = bot.get_file(backup_file.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        data = json.loads(downloaded_file.decode("utf-8"))
-
-        # Загружаем данные в память
-        store.update(data)
-        print("✅ Данные успешно восстановлены из Telegram.")
-        return True
-
-    except Exception as e:
-        print(f"❌ Ошибка восстановления: {e}")
-        return False
-
-# -----------------------------
-# Авто-бэкап при изменении данных
-# -----------------------------
-def auto_backup_on_change():
-    """Следит за изменения данных и отправляет бэкап каждые X секунд"""
-    INTERVAL = 20  # каждые 5 минут
-    last_snapshot = json.dumps(data, ensure_ascii=False)
-    def task():
-        nonlocal last_snapshot
-        while True:
-            try:
-                current_snapshot = json.dumps(data, ensure_ascii=False)
-                if current_snapshot != last_snapshot:
-                    backup_to_telegram()
-                    last_snapshot = current_snapshot
-            except Exception as e:
-                print(f"❌ Ошибка авто-бэкапа: {e}")
-            time.sleep(INTERVAL)
-    t = threading.Thread(target=task, daemon=True)
-    t.start()
-
-# ---------------------
-# -----------------------------
 # Запуск
 # -----------------------------
 if __name__ == "__main__":
-    # Восстанавливаем данные в отдельном потоке, чтобы не блокировать Flask
-    def restore_thread():
-        restored = restore_from_telegram()
-        if restored and OWNER_ID:
-            try:
-                bot.send_message(int(OWNER_ID), "✅ Бэкап успешно восстановлен.")
-            except Exception as e:
-                print(f"⚠️ Не удалось уведомить владельца: {e}")
-
-    threading.Thread(target=restore_thread, daemon=True).start()
-
-    # Настройка webhook
+    # Попытка восстановиться (если FORCE_RESTORE=1 или локальных записей нет — это делалось в load_data)
+    # Здесь просто уведомим владельца об успешном старте.
     try:
-        set_webhook()  # Если используете webhook, иначе skip
+        if OWNER_ID:
+            bot.send_message(int(OWNER_ID), f"✅ Бот запущен и работает! (версия {VERSION})")
     except Exception as e:
-        print(f"⚠️ Ошибка установки webhook: {e}")
+        log_error(f"Не удалось отправить сообщение о запуске: {e}")
 
-    # Запуск keep-alive и авто-бэкапа
+    # Установка webhook
+    try:
+        bot.remove_webhook()
+        time.sleep(0.5)
+        bot.set_webhook(url=f"{APP_URL}/{TOKEN}")
+        log_info(f"Webhook установлен: {APP_URL}/{TOKEN}")
+    except Exception as e:
+        log_error(f"Не удалось установить webhook: {e}")
+
+    # Запуск фоновых задач
     threading.Thread(target=keep_alive_task, daemon=True).start()
-    threading.Thread(target=auto_backup_on_change, daemon=True).start()
-    threading.Thread(target=schedule_daily_window_creation, daemon=True).start()
+    schedule_daily_window_creation()
 
-    # Запуск Flask
-    print("⏳ Старт бота...")
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Flask
+    log_info(f"Бот ФО версии {VERSION} запущен (Flask)")
+    app.run(host="0.0.0.0", port=PORT)
