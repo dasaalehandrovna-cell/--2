@@ -139,18 +139,38 @@ def _merge_defaults(d):
             d[k] = v
     return d
 
+# -----------------------------
+# Метаданные бэкапа (загрузка и сохранение)
+# -----------------------------
 def _load_backup_meta():
+    """Загружает данные о сообщении и файле бэкапа из окружения или локального файла."""
     meta = _read_json_file(BACKUP_META_FILE, {})
-    # ожидаем: {"message_id": int, "file_id": "AA..."}
+    env_msg_id = os.getenv("BACKUP_MESSAGE_ID")
+    env_file_id = os.getenv("BACKUP_FILE_ID")
+
+    # приоритет: Render > локальный файл
+    if env_msg_id:
+        try:
+            meta["message_id"] = int(env_msg_id)
+        except:
+            pass
+    if env_file_id:
+        meta["file_id"] = env_file_id
+
     if not isinstance(meta, dict):
-        return {}
+        meta = {}
     return meta
 
 def _save_backup_meta(meta):
+    """Сохраняет метаданные и обновляет переменные окружения (если возможно)."""
     if not isinstance(meta, dict):
         return
     _write_json_file(BACKUP_META_FILE, meta)
-
+    # Логируем для информации, чтобы можно было вручную скопировать ID в Render
+    if meta.get("message_id"):
+        log_info(f"📦 BACKUP_MESSAGE_ID = {meta['message_id']}")
+    if meta.get("file_id"):
+        log_info(f"📦 BACKUP_FILE_ID = {meta['file_id']}")
 def load_data():
     d = _read_json_file(DATA_FILE, None)
     if d is None:
