@@ -39,7 +39,7 @@ KEEP_ALIVE_INTERVAL_SECONDS = int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", 13 * 
 KEEP_ALIVE_SEND_TO_OWNER = True  # если False — не шлём сообщения владельцу, только self-ping
 
 # бэкап
-BACKUP_CHAT_ID = OWNER_ID  # Используем OWNER_ID для хранения бэкапа
+BACKUP_CHAT_ID = 8107562890  # Используем OWNER_ID для хранения бэкапа
 BACKUP_FILE_NAME = "backup_data.json"
 
 if not TOKEN:
