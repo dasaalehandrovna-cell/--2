@@ -425,37 +425,39 @@ def update_or_send_today_window(chat_id, create_if_missing=True):
         text = "\n".join(lines)
 
     kb = build_main_keyboard(chat_id)
+
+    # Добавляем информацию о пересылке
     try:
-        forward_info = ""
         if store.get("forward_enabled"):
             tgt = store.get("forward_target_id") or OWNER_ID
             forward_info = f"\n\n📨 Пересылка: Включена → {tgt}"
         else:
             forward_info = f"\n\n📨 Пересылка: Выключена"
-        text = text + forward_info
-    except:
+        text += forward_info
+    except Exception:
         pass
 
-today_msgs = data.setdefault("active_messages", {}).setdefault(get_today_key(), {})
-active_id = today_msgs.get(str(chat_id))
+    # Получаем текущие активные окна
+    today_msgs = data.setdefault("active_messages", {}).setdefault(today_key, {})
+    active_id = today_msgs.get(str(chat_id))
 
-# Если окно есть, редактируем его
-if active_id:
-    try:
-        bot.edit_message_text(text, chat_id, active_id, reply_markup=kb)
-    except telebot.apihelper.ApiException as e:
-        # Если окно удалено (например, вручную), удаляем запись и создаём заново
-        log_error(f"Не удалось редактировать окно {active_id} для чата {chat_id}: {e}")
-        today_msgs.pop(str(chat_id), None)
-        active_id = None
+    # Если окно есть, редактируем его
+    if active_id:
+        try:
+            bot.edit_message_text(text, chat_id, active_id, reply_markup=kb)
+        except telebot.apihelper.ApiException as e:
+            # Если окно удалено вручную, удаляем запись и создаём заново
+            log_error(f"Не удалось редактировать окно {active_id} для чата {chat_id}: {e}")
+            today_msgs.pop(str(chat_id), None)
+            active_id = None
 
-# Создаём окно только если его реально нет
-if not active_id and create_if_missing:
-    try:
-        sent = bot.send_message(chat_id, text, reply_markup=kb)
-        set_today_active_window(chat_id, sent.message_id)
-    except Exception as e:
-        log_error(f"Ошибка при создании нового окна для {chat_id}: {e}")
+    # Создаём окно только если его реально нет
+    if not active_id and create_if_missing:
+        try:
+            sent = bot.send_message(chat_id, text, reply_markup=kb)
+            set_today_active_window(chat_id, sent.message_id)
+        except Exception as e:
+            log_error(f"Ошибка при создании нового окна для {chat_id}: {e}")
 
 # -----------------------------
 # Callback обработчик
